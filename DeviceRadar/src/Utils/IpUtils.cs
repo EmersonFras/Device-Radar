@@ -104,7 +104,7 @@ namespace DeviceRadar.Utils
          * 
          * @return (IPAddress start, IPAddress end) - A tuple containing the start and end of the usable IP range.
          */
-        public static (IPAddress start, IPAddress end) GetUsableIpRange()
+        public static (uint start, uint end) GetUsableIpRange()
         {
             IPAddress localIp = GetLocalIPv4();
             IPAddress subnetMask = GetSubnetMask(localIp);
@@ -115,7 +115,52 @@ namespace DeviceRadar.Utils
             uint network = ipValue & maskValue;
             uint broadcast = network | ~maskValue;
 
-            return (UInt32ToIp(network + 1), UInt32ToIp(broadcast - 1));
+            return (network + 1, broadcast - 1);
         }
+
+        private static async Task PingAsync(IPAddress ip, List<IPAddress> activeIPs, object lockObj)
+        {
+            using var Ping = new Ping();
+
+            try
+            {
+                var reply = await Ping.SendPingAsync(ip, 3000);
+                Console.WriteLine($"Pinging {ip} - Status: {reply.Status}");
+                if (reply.Status == IPStatus.Success)
+                {
+                    lock (lockObj)
+                    {
+                        activeIPs.Add(ip);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error pinging {ip}: {ex.Message}");
+                return;
+            }
+        }
+
+        public async static Task<List<IPAddress>> GetActiveIPs()
+        {
+            List<IPAddress> activeIPs = new List<IPAddress>();
+            var lockObj = new object();
+            List<Task> tasks = new List<Task>();
+
+
+            var (start, end) = GetUsableIpRange();
+
+            for (uint currIpVal = start; currIpVal <= end; currIpVal++)
+            {
+                IPAddress currentIP = UInt32ToIp(currIpVal);
+
+                tasks.Add(PingAsync(currentIP, activeIPs, lockObj));
+            }
+
+            await Task.WhenAll(tasks);
+
+            return activeIPs;
+        }
+
     }
 }
